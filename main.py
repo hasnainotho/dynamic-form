@@ -348,11 +348,13 @@ from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from public.app.database import SessionLocal, init_db
-from public.app.models import crud, models
-from public.app.schemas import schemas
+import public.app.models as _models
+import public.app.crud as _crud
+import public.app.schemas as _schemas
 from public.app.email_utils import send_email
 import os
 from dotenv import load_dotenv
+import logging
 
 load_dotenv()
 
@@ -379,7 +381,12 @@ def get_db():
 
 @app.on_event('startup')
 def on_startup():
-    init_db()
+    try:
+        ok = init_db()
+        if not ok:
+            logging.warning('Database initialization reported failure; continuing without DB schema creation')
+    except Exception as e:
+        logging.exception('Unhandled exception during init_db: %s', e)
 
 
 @app.get('/health')
@@ -388,14 +395,14 @@ def health():
 
 
 @app.post('/forms')
-def create_form(form: schemas.FormCreate, db: Session = Depends(get_db)):
-    created = crud.create_form(db, form.dict())
+def create_form(form: _schemas.FormCreate, db: Session = Depends(get_db)):
+    created = _crud.create_form(db, form.dict())
     return {'form': {'id': created.id, 'title': created.title}}
 
 
 @app.get('/forms')
 def list_forms(form_type: str | None = None, db: Session = Depends(get_db)):
-    forms = crud.get_forms(db, form_type)
+    forms = _crud.get_forms(db, form_type)
     result = []
     for f in forms:
         result.append(
@@ -412,7 +419,7 @@ def list_forms(form_type: str | None = None, db: Session = Depends(get_db)):
 
 @app.get('/forms/{form_id}')
 def get_form(form_id: str, db: Session = Depends(get_db)):
-    f = crud.get_form(db, form_id)
+    f = _crud.get_form(db, form_id)
     if not f:
         raise HTTPException(status_code=404, detail='Form not found')
     # convert questions
@@ -442,8 +449,8 @@ def get_form(form_id: str, db: Session = Depends(get_db)):
 
 
 @app.put('/forms/{form_id}')
-def update_form(form_id: str, form: schemas.FormCreate, db: Session = Depends(get_db)):
-    existing = db.query(models.Form).filter(models.Form.id == form_id).first()
+def update_form(form_id: str, form: _schemas.FormCreate, db: Session = Depends(get_db)):
+    existing = db.query(_models.Form).filter(_models.Form.id == form_id).first()
     if not existing:
         raise HTTPException(status_code=404, detail='Form not found')
     existing.title = form.title
@@ -459,7 +466,7 @@ def update_form(form_id: str, form: schemas.FormCreate, db: Session = Depends(ge
 
 @app.delete('/forms/{form_id}')
 def delete_form(form_id: str, db: Session = Depends(get_db)):
-    existing = db.query(models.Form).filter(models.Form.id == form_id).first()
+    existing = db.query(_models.Form).filter(_models.Form.id == form_id).first()
     if not existing:
         raise HTTPException(status_code=404, detail='Form not found')
     db.delete(existing)
@@ -469,16 +476,16 @@ def delete_form(form_id: str, db: Session = Depends(get_db)):
 
 @app.post('/forms/{form_id}/questions')
 def create_questions_endpoint(form_id: str, questions: list[dict], db: Session = Depends(get_db)):
-    form = crud.get_form(db, form_id)
+    form = _crud.get_form(db, form_id)
     if not form:
         raise HTTPException(status_code=404, detail='Form not found')
-    created = crud.create_questions(db, form_id, questions)
+    created = _crud.create_questions(db, form_id, questions)
     return {'created': [q.id for q in created]}
 
 
 @app.put('/questions/{question_id}')
 def update_question(question_id: str, updates: dict, db: Session = Depends(get_db)):
-    updated = crud.update_question(db, question_id, updates)
+    updated = _crud.update_question(db, question_id, updates)
     if not updated:
         raise HTTPException(status_code=404, detail='Question not found')
     return {'question': {'id': updated.id}}
@@ -486,7 +493,7 @@ def update_question(question_id: str, updates: dict, db: Session = Depends(get_d
 
 @app.delete('/questions/{question_id}')
 def delete_question(question_id: str, db: Session = Depends(get_db)):
-    ok = crud.delete_question(db, question_id)
+    ok = _crud.delete_question(db, question_id)
     if not ok:
         raise HTTPException(status_code=404, detail='Question not found')
     return {'ok': True}
@@ -496,7 +503,7 @@ def delete_question(question_id: str, db: Session = Depends(get_db)):
 def list_responses(form_id: str | None = None, db: Session = Depends(get_db)):
     if not form_id:
         raise HTTPException(status_code=400, detail='form_id is required')
-    responses = crud.get_responses(db, form_id)
+    responses = _crud.get_responses(db, form_id)
     result = []
     for r in responses:
         result.append({'id': r.id, 'status': r.status, 'respondent_email': r.respondent_email, 'submitted_at': r.submitted_at})
@@ -505,7 +512,7 @@ def list_responses(form_id: str | None = None, db: Session = Depends(get_db)):
 
 @app.get('/responses/{response_id}')
 def get_response(response_id: str, db: Session = Depends(get_db)):
-    r = crud.get_response(db, response_id)
+    r = _crud.get_response(db, response_id)
     if not r:
         raise HTTPException(status_code=404, detail='Response not found')
     answers = []
@@ -516,7 +523,7 @@ def get_response(response_id: str, db: Session = Depends(get_db)):
 
 @app.put('/responses/{response_id}')
 def update_response(response_id: str, updates: dict, db: Session = Depends(get_db)):
-    updated = crud.update_response(db, response_id, updates)
+    updated = _crud.update_response(db, response_id, updates)
     if not updated:
         raise HTTPException(status_code=404, detail='Response not found')
     return {'response': {'id': updated.id, 'status': updated.status}}
@@ -524,17 +531,17 @@ def update_response(response_id: str, updates: dict, db: Session = Depends(get_d
 
 @app.put('/responses/{response_id}/answers')
 def update_response_answers(response_id: str, answers: list[dict], db: Session = Depends(get_db)):
-    resp = crud.get_response(db, response_id)
+    resp = _crud.get_response(db, response_id)
     if not resp:
         raise HTTPException(status_code=404, detail='Response not found')
-    created = crud.update_answers(db, response_id, answers)
+    created = _crud.update_answers(db, response_id, answers)
     return {'updated': [c.id for c in created]}
 
 
 @app.post('/tickets')
-def create_ticket(ticket: schemas.TicketCreate, db: Session = Depends(get_db)):
+def create_ticket(ticket: _schemas.TicketCreate, db: Session = Depends(get_db)):
     # Create a ticket and send the base form link
-    t = crud.create_ticket(db, ticket.email, ticket.initial_form_id)
+    t = _crud.create_ticket(db, ticket.email, ticket.initial_form_id)
 
     base_form_id = ticket.initial_form_id
     if base_form_id:
@@ -546,8 +553,8 @@ def create_ticket(ticket: schemas.TicketCreate, db: Session = Depends(get_db)):
 
 
 @app.post('/tickets/{ticket_id}/assign')
-def assign_form(ticket_id: str, payload: schemas.AssignFormPayload, db: Session = Depends(get_db)):
-    ticket = crud.assign_form_to_ticket(db, ticket_id, payload.form_id)
+def assign_form(ticket_id: str, payload: _schemas.AssignFormPayload, db: Session = Depends(get_db)):
+    ticket = _crud.assign_form_to_ticket(db, ticket_id, payload.form_id)
     if not ticket:
         raise HTTPException(status_code=404, detail='Ticket not found')
 
@@ -560,10 +567,10 @@ def assign_form(ticket_id: str, payload: schemas.AssignFormPayload, db: Session 
 
 
 @app.post('/responses')
-def submit_response(payload: schemas.SubmitResponse, db: Session = Depends(get_db)):
+def submit_response(payload: _schemas.SubmitResponse, db: Session = Depends(get_db)):
     # Create response and answers
     payload_dict = payload.dict()
-    response = crud.submit_response(db, payload_dict)
+    response = _crud.submit_response(db, payload_dict)
 
     # Build a map of answers by questionId for workflow evaluation
     answers_list = payload_dict.get('answers', []) or []
@@ -580,7 +587,7 @@ def submit_response(payload: schemas.SubmitResponse, db: Session = Depends(get_d
     # Evaluate conditional logic workflows defined on questions (if any)
     workflow_result = None
     try:
-        workflow_result = crud.process_workflows(db, response, answers_map)
+        workflow_result = _crud.process_workflows(db, response, answers_map)
     except Exception:
         # don't let workflow failures break the response submission
         workflow_result = None
@@ -589,7 +596,7 @@ def submit_response(payload: schemas.SubmitResponse, db: Session = Depends(get_d
     if payload.referenceType == 'ticket' and payload.referenceId:
         # If admin assigned a specific form, we could change status
         # For now, mark pending_approval when reference is present
-        crud.update_response_status(db, response.id, 'pending_approval')
+        _crud.update_response_status(db, response.id, 'pending_approval')
 
     result = {'response': {'id': response.id, 'status': response.status}}
     if workflow_result and isinstance(workflow_result, dict) and workflow_result.get('next_form_id'):
@@ -598,11 +605,11 @@ def submit_response(payload: schemas.SubmitResponse, db: Session = Depends(get_d
 
 
 @app.post('/responses/{response_id}/approve')
-def approve_response(response_id: str, payload: schemas.ApprovePayload, db: Session = Depends(get_db)):
+def approve_response(response_id: str, payload: _schemas.ApprovePayload, db: Session = Depends(get_db)):
     if payload.approve:
-        updated = crud.update_response_status(db, response_id, 'approved')
+        updated = _crud.update_response_status(db, response_id, 'approved')
     else:
-        updated = crud.update_response_status(db, response_id, 'rejected')
+        updated = _crud.update_response_status(db, response_id, 'rejected')
     if not updated:
         raise HTTPException(status_code=404, detail='Response not found')
     return {'response': {'id': updated.id, 'status': updated.status}}
